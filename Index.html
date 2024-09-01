@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Video Maker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        #canvasContainer {
+            position: relative;
+            width: 640px;
+            height: 360px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            background-color: black;
+        }
+        #controls {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        input[type="text"], input[type="file"] {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Simple Video Maker</h1>
+    <div id="canvasContainer">
+        <canvas id="videoCanvas"></canvas>
+    </div>
+    <div id="controls">
+        <input type="file" id="bgMusic" accept="audio/*" />
+        <input type="text" id="textInput" placeholder="Enter text to animate" />
+        <button onclick="addText()">Add Text</button>
+        <button onclick="exportVideo()">Export as MP4</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg.js/0.11.0/ffmpeg.min.js"></script>
+    <script>
+        const canvas = document.getElementById('videoCanvas');
+        const ctx = canvas.getContext('2d');
+        let texts = [];
+        let bgMusic;
+
+        document.getElementById('bgMusic').addEventListener('change', function(event) {
+            bgMusic = event.target.files[0];
+        });
+
+        function addText() {
+            const text = document.getElementById('textInput').value;
+            if (text) {
+                texts.push({ text, x: 0, y: 180 });
+                animateText();
+            }
+        }
+
+        function animateText() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            texts.forEach(t => {
+                ctx.font = '30px Arial';
+                ctx.fillStyle = 'white';
+                ctx.fillText(t.text, t.x, t.y);
+                t.x += 2;  // Tweening: move text to the right
+            });
+
+            if (texts.some(t => t.x < canvas.width)) {
+                requestAnimationFrame(animateText);
+            }
+        }
+
+        async function exportVideo() {
+            const { createFFmpeg, fetchFile } = FFmpeg;
+            const ffmpeg = createFFmpeg({ log: true });
+
+            await ffmpeg.load();
+
+            const frames = [];
+            for (let i = 0; i < 100; i++) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                texts.forEach(t => {
+                    ctx.font = '30px Arial';
+                    ctx.fillStyle = 'white';
+                    ctx.fillText(t.text, t.x, t.y);
+                    t.x += 2;
+                });
+                const frameData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                frames.push(new Uint8Array(frameData.data.buffer));
+            }
+
+            for (let i = 0; i < frames.length; i++) {
+                ffmpeg.FS('writeFile', `frame${i}.png`, frames[i]);
+            }
+
+            if (bgMusic) {
+                await ffmpeg.FS('writeFile', 'music.mp3', await fetchFile(bgMusic));
+            }
+
+            await ffmpeg.run(
+                '-r', '30', // 30 fps
+                '-f', 'image2',
+                '-i', 'frame%d.png',
+                '-i', bgMusic ? 'music.mp3' : '',
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-c:a', bgMusic ? 'aac' : '',
+                '-shortest',
+                'output.mp4'
+            );
+
+            const data = ffmpeg.FS('readFile', 'output.mp4');
+            const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'output.mp4';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
